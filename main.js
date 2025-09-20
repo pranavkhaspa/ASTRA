@@ -21,7 +21,7 @@ app.use(cookieParser());
 // ✅ Setup CORS properly
 const allowedOrigins = [
   "http://localhost:5174",        // Local frontend for development
-  "https://your-frontend-domain.com", // Deployed frontend (replace with your real domain)
+  "https://astra-two-delta.vercel.app/", // Deployed frontend (replace with your real domain)
   // Add other allowed origins here if needed
 ];
 

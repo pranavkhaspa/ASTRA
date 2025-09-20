@@ -15,7 +15,7 @@ router.post('/clarifier/submit-answers', agentsController.submitClarifierAnswers
 // Route to run the Conflict Resolver Agent
 router.post('/conflict-resolver', agentsController.runConflictResolver);
 
-// POST /api/agents/validator
+// POST /api/agents/validatorxf
 // Route to run the Validator Agent
 router.post('/validator', agentsController.runValidator);
 
