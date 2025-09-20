@@ -15,43 +15,121 @@ const getSession = async (sessionId, res) => {
   return session;
 };
 
-// Orchestrator function to run all agents synchronously
-exports.runAllAgents = async (req, res) => {
+// Agent 1: Clarifier
+exports.runClarifier = async (req, res) => {
   try {
-    const { sessionId, userIdea } = req.body;
-    const session = await getSession(sessionId, res);
-    if (!session) return;
+    const { userIdea } = req.body;
+    if (!userIdea) {
+      return res.status(400).json({ message: 'User idea is required.' });
+    }
 
-    // Agent 1: Clarifier
     const clarifierOutput = await runClarifierAgent(userIdea);
-    session.clarifierOutput = clarifierOutput;
+    
+    // Create a new session and save the clarifier output
+    const session = new Session({
+      userIdea,
+      clarifierOutput,
+      status: 'clarified'
+    });
     await session.save();
 
-    // Agent 2: Conflict Resolver (uses output from Clarifier)
-    const conflictOutput = await runConflictResolverAgent(clarifierOutput.draftRequirements);
-    session.conflictOutput = conflictOutput;
-    await session.save();
-
-    // Agent 3: Validator (uses output from Clarifier and Conflict Resolver)
-    const validatorOutput = await runValidatorAgent(clarifierOutput.draftRequirements, conflictOutput.conflicts);
-    session.validatorOutput = validatorOutput;
-    await session.save();
-
-    // Agent 4: Prioritizer (uses output from Validator)
-    const finalOutput = await runPrioritizerAgent(validatorOutput.feasibilityReport);
-    session.prioritizerOutput = finalOutput;
-    session.status = 'prioritized';
-    await session.save();
-
-    res.status(200).json(finalOutput);
+    res.status(200).json({
+      sessionId: session._id,
+      clarifierOutput
+    });
 
   } catch (error) {
-    console.error('Error running agent pipeline:', error);
+    console.error('Error running Clarifier Agent:', error);
     res.status(500).json({ message: 'Internal server error.' });
   }
 };
 
-// Agent 1: Clarifier
+// Agent 2: Conflict Resolver
+exports.runConflictResolver = async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    const session = await getSession(sessionId, res);
+    if (!session) return;
+
+    const draftRequirements = session.clarifierOutput.draftRequirements;
+    if (!draftRequirements) {
+      return res.status(400).json({ message: 'Clarifier output missing in session.' });
+    }
+
+    const conflictOutput = await runConflictResolverAgent(draftRequirements);
+    session.conflictOutput = conflictOutput;
+    session.status = 'conflicts_identified';
+    await session.save();
+
+    res.status(200).json({
+      sessionId: session._id,
+      conflictOutput
+    });
+
+  } catch (error) {
+    console.error('Error running Conflict Resolver Agent:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+};
+
+// Agent 3: Validator
+exports.runValidator = async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    const session = await getSession(sessionId, res);
+    if (!session) return;
+
+    const draftRequirements = session.clarifierOutput.draftRequirements;
+    const conflicts = session.conflictOutput.conflicts;
+    if (!draftRequirements || !conflicts) {
+      return res.status(400).json({ message: 'Clarifier or Conflict Resolver output missing in session.' });
+    }
+
+    const validatorOutput = await runValidatorAgent(draftRequirements, conflicts);
+    session.validatorOutput = validatorOutput;
+    session.status = 'validated';
+    await session.save();
+
+    res.status(200).json({
+      sessionId: session._id,
+      validatorOutput
+    });
+
+  } catch (error) {
+    console.error('Error running Validator Agent:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+};
+
+// Agent 4: Prioritizer
+exports.runPrioritizer = async (req, res) => {
+  try {
+    const { sessionId } = req.body;
+    const session = await getSession(sessionId, res);
+    if (!session) return;
+
+    const feasibilityReport = session.validatorOutput.feasibilityReport;
+    if (!feasibilityReport) {
+      return res.status(400).json({ message: 'Validator output missing in session.' });
+    }
+
+    const finalOutput = await runPrioritizerAgent(feasibilityReport);
+    session.prioritizerOutput = finalOutput;
+    session.status = 'prioritized';
+    await session.save();
+
+    res.status(200).json({
+      sessionId: session._id,
+      finalOutput
+    });
+
+  } catch (error) {
+    console.error('Error running Prioritizer Agent:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+};
+
+// Internal Agent Functions (kept separate for clarity)
 async function runClarifierAgent(userIdea) {
   const genAI = new GoogleGenerativeAI(process.env.CLARIFIER_GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
@@ -78,7 +156,6 @@ async function runClarifierAgent(userIdea) {
   return JSON.parse(result.response.text);
 }
 
-// Agent 2: Conflict Resolver
 async function runConflictResolverAgent(draftRequirements) {
   const genAI = new GoogleGenerativeAI(process.env.CONFLICT_GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
@@ -106,7 +183,6 @@ async function runConflictResolverAgent(draftRequirements) {
   return JSON.parse(result.response.text);
 }
 
-// Agent 3: Validator
 async function runValidatorAgent(draftRequirements, conflicts) {
   const genAI = new GoogleGenerativeAI(process.env.VALIDATOR_GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
@@ -137,7 +213,6 @@ async function runValidatorAgent(draftRequirements, conflicts) {
   return JSON.parse(result.response.text);
 }
 
-// Agent 4: Prioritizer
 async function runPrioritizerAgent(feasibilityReport) {
   const genAI = new GoogleGenerativeAI(process.env.PRIORITIZER_GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
