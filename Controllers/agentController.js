@@ -1,7 +1,5 @@
 const Session = require('../Model/sessionModel');
-// NOTE: You'll need to install and import your Gemini API library here
-// e.g., const { GoogleGenerativeAI } = require('@google/generative-ai');
-// const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // Helper function to handle common session retrieval logic
 const getSession = async (sessionId, res) => {
@@ -24,31 +22,42 @@ exports.runClarifier = async (req, res) => {
     const session = await getSession(sessionId, res);
     if (!session) return;
 
-    // TODO: Integrate with Gemini API here
-    // Replace this placeholder with an actual API call to generate clarifying questions and draft requirements.
-    // Example: const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-    // const prompt = `The user wants to build a "${userIdea}". Ask clarifying questions to refine this idea.`;
-    // const result = await model.generateContent(prompt);
-    // const clarifierOutput = JSON.parse(result.response.text);
+    // Use a single environment variable for the API key, as it provides access to all models.
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
 
-    const mockOutput = {
-      questions: [
-        'What specific age range are you targeting within Gen Z?',
-        'What makes your platform different from competitors like Amazon?',
-        'When you say "simple and stylish," can you provide examples or describe the desired feel?',
-      ],
-      draftRequirements: {
-        coreFeatures: ['User profiles', 'Product listings', 'Checkout system'],
-        aesthetics: 'Minimalist and clean',
-        targetAudience: '18-24 year olds',
-      },
-    };
+    // The prompt guides the model to act as a "Clarifier Agent"
+    const prompt = `
+      You are a "Clarifier Agent" for a software development team. Your goal is to take a high-level user idea and generate two things:
+      1. A list of clarifying questions to ask the user to refine the idea.
+      2. A first draft of requirements based on the initial idea.
+      
+      The questions should be specific and help uncover details about the target audience, core features, and unique selling points. The draft requirements should be a structured JSON object with keys like 'coreFeatures', 'aesthetics', and 'targetAudience'.
+      
+      User's idea: "${userIdea}"
+      
+      Please provide your response as a single, valid JSON object with the following structure:
+      {
+        "questions": ["Question 1", "Question 2", "Question 3"],
+        "draftRequirements": {
+          "coreFeatures": ["Feature A", "Feature B", "Feature C"],
+          "aesthetics": "A brief description of the desired look and feel.",
+          "targetAudience": "A description of the ideal user."
+        }
+      }
+      `;
 
-    session.clarifierOutput = mockOutput;
+    // Make the API call to generate content
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const clarifierOutput = JSON.parse(response.text);
+
+    // Save the output to the session and update its status
+    session.clarifierOutput = clarifierOutput;
     session.status = 'clarified';
     await session.save();
 
-    res.status(200).json(mockOutput);
+    res.status(200).json(clarifierOutput);
   } catch (error) {
     console.error('Error running clarifier agent:', error);
     res.status(500).json({ message: 'Internal server error.' });
