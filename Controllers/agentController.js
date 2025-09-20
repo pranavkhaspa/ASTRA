@@ -15,22 +15,41 @@ const getSession = async (sessionId, res) => {
   return session;
 };
 
+// Start a new session and get a session ID
+exports.startSession = async (req, res) => {
+  try {
+    const session = new Session({
+      status: 'started'
+    });
+    await session.save();
+    res.status(200).json({ sessionId: session._id });
+  } catch (error) {
+    console.error('Error starting session:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+};
+
 // Agent 1: Clarifier
 exports.runClarifier = async (req, res) => {
   try {
-    const { userIdea } = req.body;
-    if (!userIdea) {
-      return res.status(400).json({ message: 'User idea is required.' });
+    const { sessionId, userIdea } = req.body;
+
+    // Check if session ID and user idea are provided
+    if (!sessionId || !userIdea) {
+      return res.status(400).json({ message: 'Session ID and user idea are required.' });
     }
 
+    // Retrieve the existing session
+    const session = await getSession(sessionId, res);
+    if (!session) return;
+
+    // Run the clarifier agent
     const clarifierOutput = await runClarifierAgent(userIdea);
-    
-    // Create a new session and save the clarifier output
-    const session = new Session({
-      userIdea,
-      clarifierOutput,
-      status: 'clarified'
-    });
+
+    // Update the existing session with clarifier output
+    session.userIdea = userIdea;
+    session.clarifierOutput = clarifierOutput;
+    session.status = 'clarified';
     await session.save();
 
     res.status(200).json({
@@ -132,7 +151,7 @@ exports.runPrioritizer = async (req, res) => {
 // Internal Agent Functions (kept separate for clarity)
 async function runClarifierAgent(userIdea) {
   const genAI = new GoogleGenerativeAI(process.env.CLARIFIER_GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   const prompt = `
     You are a "Clarifier Agent" for a software development team. Your goal is to conduct a simulated interview to transform a high-level, ambiguous user idea into a detailed, concrete set of requirements.
     
@@ -158,7 +177,7 @@ async function runClarifierAgent(userIdea) {
 
 async function runConflictResolverAgent(draftRequirements) {
   const genAI = new GoogleGenerativeAI(process.env.CONFLICT_GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   const prompt = `
     You are a "Conflict Resolver Agent". Your task is to analyze a set of draft software requirements and identify any logical inconsistencies or contradictions.
     
@@ -185,7 +204,7 @@ async function runConflictResolverAgent(draftRequirements) {
 
 async function runValidatorAgent(draftRequirements, conflicts) {
   const genAI = new GoogleGenerativeAI(process.env.VALIDATOR_GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   const prompt = `
     You are a "Validator Agent". Your role is to assess the feasibility and viability of a set of software requirements and any identified conflicts.
     
@@ -215,7 +234,7 @@ async function runValidatorAgent(draftRequirements, conflicts) {
 
 async function runPrioritizerAgent(feasibilityReport) {
   const genAI = new GoogleGenerativeAI(process.env.PRIORITIZER_GEMINI_API_KEY);
-  const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   const prompt = `
     You are a "Prioritizer Agent". Your job is to create a structured, prioritized roadmap based on a feasibility report.
     
@@ -237,4 +256,4 @@ async function runPrioritizerAgent(feasibilityReport) {
   `;
   const result = await model.generateContent(prompt);
   return JSON.parse(result.response.text);
-}
+} 
