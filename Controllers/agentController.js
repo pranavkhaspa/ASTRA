@@ -150,6 +150,7 @@ exports.runPrioritizer = async (req, res) => {
 
 // Internal Agent Functions (kept separate for clarity)
 async function runClarifierAgent(userIdea) {
+  console.log('--- Running Clarifier Agent ---');
   const genAI = new GoogleGenerativeAI(process.env.CLARIFIER_GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   const prompt = `
@@ -171,11 +172,33 @@ async function runClarifierAgent(userIdea) {
       }
     }
   `;
+  console.log('Clarifier Prompt:', prompt);
+  
   const result = await model.generateContent(prompt);
-  return JSON.parse(result.response.text);
+  const text = result.response.text;
+  
+  console.log('Raw Clarifier API Response:', text);
+  
+  // Use a regular expression to extract the first JSON object from the string
+  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```|{([\s\S]*?)}/);
+  
+  if (jsonMatch && (jsonMatch[1] || jsonMatch[2])) {
+    try {
+      const jsonString = jsonMatch[1] || `{${jsonMatch[2]}}`;
+      return JSON.parse(jsonString);
+    } catch (e) {
+      console.error('Failed to parse extracted JSON:', e);
+      // Fallback to the original text if parsing fails
+      return JSON.parse(text);
+    }
+  } else {
+    // If no JSON is found, try to parse the whole string as a last resort
+    return JSON.parse(text);
+  }
 }
 
 async function runConflictResolverAgent(draftRequirements) {
+  console.log('--- Running Conflict Resolver Agent ---');
   const genAI = new GoogleGenerativeAI(process.env.CONFLICT_GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   const prompt = `
@@ -198,11 +221,29 @@ async function runConflictResolverAgent(draftRequirements) {
       ]
     }
   `;
+  console.log('Conflict Resolver Prompt:', prompt);
+
   const result = await model.generateContent(prompt);
-  return JSON.parse(result.response.text);
+  const text = result.response.text;
+  
+  console.log('Raw Conflict Resolver API Response:', text);
+
+  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```|{([\s\S]*?)}/);
+  if (jsonMatch && (jsonMatch[1] || jsonMatch[2])) {
+    try {
+      const jsonString = jsonMatch[1] || `{${jsonMatch[2]}}`;
+      return JSON.parse(jsonString);
+    } catch (e) {
+      console.error('Failed to parse extracted JSON in Conflict Resolver:', e);
+      return JSON.parse(text);
+    }
+  } else {
+    return JSON.parse(text);
+  }
 }
 
 async function runValidatorAgent(draftRequirements, conflicts) {
+  console.log('--- Running Validator Agent ---');
   const genAI = new GoogleGenerativeAI(process.env.VALIDATOR_GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   const prompt = `
@@ -228,11 +269,29 @@ async function runValidatorAgent(draftRequirements, conflicts) {
       "riskLevel": "low" | "medium" | "high"
     }
   `;
+  console.log('Validator Prompt:', prompt);
+
   const result = await model.generateContent(prompt);
-  return JSON.parse(result.response.text);
+  const text = result.response.text;
+  
+  console.log('Raw Validator API Response:', text);
+
+  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```|{([\s\S]*?)}/);
+  if (jsonMatch && (jsonMatch[1] || jsonMatch[2])) {
+    try {
+      const jsonString = jsonMatch[1] || `{${jsonMatch[2]}}`;
+      return JSON.parse(jsonString);
+    } catch (e) {
+      console.error('Failed to parse extracted JSON in Validator:', e);
+      return JSON.parse(text);
+    }
+  } else {
+    return JSON.parse(text);
+  }
 }
 
 async function runPrioritizerAgent(feasibilityReport) {
+  console.log('--- Running Prioritizer Agent ---');
   const genAI = new GoogleGenerativeAI(process.env.PRIORITIZER_GEMINI_API_KEY);
   const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   const prompt = `
@@ -254,6 +313,23 @@ async function runPrioritizerAgent(feasibilityReport) {
       "niceToHave": ["Feature X", "Feature Y"]
     }
   `;
+  console.log('Prioritizer Prompt:', prompt);
+
   const result = await model.generateContent(prompt);
-  return JSON.parse(result.response.text);
-} 
+  const text = result.response.text;
+  
+  console.log('Raw Prioritizer API Response:', text);
+
+  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```|{([\s\S]*?)}/);
+  if (jsonMatch && (jsonMatch[1] || jsonMatch[2])) {
+    try {
+      const jsonString = jsonMatch[1] || `{${jsonMatch[2]}}`;
+      return JSON.parse(jsonString);
+    } catch (e) {
+      console.error('Failed to parse extracted JSON in Prioritizer:', e);
+      return JSON.parse(text);
+    }
+  } else {
+    return JSON.parse(text);
+  }
+}
