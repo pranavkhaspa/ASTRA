@@ -15,154 +15,151 @@ const getSession = async (sessionId, res) => {
   return session;
 };
 
-// POST /api/agents/clarifier
-exports.runClarifier = async (req, res) => {
+// Orchestrator function to run all agents synchronously
+exports.runAllAgents = async (req, res) => {
   try {
     const { sessionId, userIdea } = req.body;
     const session = await getSession(sessionId, res);
     if (!session) return;
 
-    // Use a single environment variable for the API key, as it provides access to all models.
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-
-    // The prompt guides the model to act as a "Clarifier Agent"
-    const prompt = `
-      You are a "Clarifier Agent" for a software development team. Your goal is to take a high-level user idea and generate two things:
-      1. A list of clarifying questions to ask the user to refine the idea.
-      2. A first draft of requirements based on the initial idea.
-      
-      The questions should be specific and help uncover details about the target audience, core features, and unique selling points. The draft requirements should be a structured JSON object with keys like 'coreFeatures', 'aesthetics', and 'targetAudience'.
-      
-      User's idea: "${userIdea}"
-      
-      Please provide your response as a single, valid JSON object with the following structure:
-      {
-        "questions": ["Question 1", "Question 2", "Question 3"],
-        "draftRequirements": {
-          "coreFeatures": ["Feature A", "Feature B", "Feature C"],
-          "aesthetics": "A brief description of the desired look and feel.",
-          "targetAudience": "A description of the ideal user."
-        }
-      }
-      `;
-
-    // Make the API call to generate content
-    const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const clarifierOutput = JSON.parse(response.text);
-
-    // Save the output to the session and update its status
+    // Agent 1: Clarifier
+    const clarifierOutput = await runClarifierAgent(userIdea);
     session.clarifierOutput = clarifierOutput;
-    session.status = 'clarified';
     await session.save();
 
-    res.status(200).json(clarifierOutput);
-  } catch (error) {
-    console.error('Error running clarifier agent:', error);
-    res.status(500).json({ message: 'Internal server error.' });
-  }
-};
-
-// POST /api/agents/conflict-resolver
-exports.runConflictResolver = async (req, res) => {
-  try {
-    const { sessionId } = req.body;
-    const session = await getSession(sessionId, res);
-    if (!session) return;
-
-    if (session.status !== 'clarified') {
-      return res.status(400).json({ message: 'Clarifier agent must be run first.' });
-    }
-
-    // TODO: Integrate with Gemini API here
-    // The prompt would analyze session.clarifierOutput to find contradictions.
-    // Example: const prompt = `Analyze these requirements for contradictions: ${JSON.stringify(session.clarifierOutput.draftRequirements)}`;
-
-    const mockOutput = {
-      conflicts: [
-        {
-          issue: 'Minimalist design vs social media-like features (e.g., infinite scroll)',
-          options: [
-            "Keep minimalist: drop social feed",
-            "Emphasize engagement: integrate 'reels' feature with a modified aesthetic"
-          ],
-        },
-      ],
-    };
-
-    session.conflictOutput = mockOutput;
-    session.status = 'resolved';
+    // Agent 2: Conflict Resolver (uses output from Clarifier)
+    const conflictOutput = await runConflictResolverAgent(clarifierOutput.draftRequirements);
+    session.conflictOutput = conflictOutput;
     await session.save();
 
-    res.status(200).json(mockOutput);
-  } catch (error) {
-    console.error('Error running conflict resolver agent:', error);
-    res.status(500).json({ message: 'Internal server error.' });
-  }
-};
-
-// POST /api/agents/validator
-exports.runValidator = async (req, res) => {
-  try {
-    const { sessionId } = req.body;
-    const session = await getSession(sessionId, res);
-    if (!session) return;
-
-    if (session.status !== 'resolved') {
-      return res.status(400).json({ message: 'Conflict resolver agent must be run first.' });
-    }
-
-    // TODO: Integrate with Gemini API here
-    // The prompt would validate session.clarifierOutput and session.conflictOutput against feasibility checks.
-    
-    const mockOutput = {
-      feasibilityReport: {
-        technical: "Real-time inventory system is a high-complexity feature requiring dedicated infrastructure.",
-        market: "Gamified shopping and social features are trending, which provides a good differentiator.",
-        business: "The proposed features align well with the goal of high user retention.",
-      },
-      riskLevel: "medium",
-    };
-
-    session.validatorOutput = mockOutput;
-    session.status = 'validated';
+    // Agent 3: Validator (uses output from Clarifier and Conflict Resolver)
+    const validatorOutput = await runValidatorAgent(clarifierOutput.draftRequirements, conflictOutput.conflicts);
+    session.validatorOutput = validatorOutput;
     await session.save();
 
-    res.status(200).json(mockOutput);
-  } catch (error) {
-    console.error('Error running validator agent:', error);
-    res.status(500).json({ message: 'Internal server error.' });
-  }
-};
-
-// POST /api/agents/prioritizer
-exports.runPrioritizer = async (req, res) => {
-  try {
-    const { sessionId } = req.body;
-    const session = await getSession(sessionId, res);
-    if (!session) return;
-
-    if (session.status !== 'validated') {
-      return res.status(400).json({ message: 'Validator agent must be run first.' });
-    }
-
-    // TODO: Integrate with Gemini API here
-    // The prompt would categorize features from session.clarifierOutput based on impact and effort.
-    
-    const mockOutput = {
-      mustHave: ['Product listings', 'Checkout system', 'User authentication'],
-      shouldHave: ['User profiles', 'Rating system', 'Basic search functionality'],
-      niceToHave: ['Loyalty program', 'Advanced analytics dashboard', 'AI-powered product recommendations'],
-    };
-
-    session.prioritizerOutput = mockOutput;
+    // Agent 4: Prioritizer (uses output from Validator)
+    const finalOutput = await runPrioritizerAgent(validatorOutput.feasibilityReport);
+    session.prioritizerOutput = finalOutput;
     session.status = 'prioritized';
     await session.save();
 
-    res.status(200).json(mockOutput);
+    res.status(200).json(finalOutput);
+
   } catch (error) {
-    console.error('Error running prioritizer agent:', error);
+    console.error('Error running agent pipeline:', error);
     res.status(500).json({ message: 'Internal server error.' });
   }
 };
+
+// Agent 1: Clarifier
+async function runClarifierAgent(userIdea) {
+  const genAI = new GoogleGenerativeAI(process.env.CLARIFIER_GEMINI_API_KEY);
+  const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+  const prompt = `
+    You are a "Clarifier Agent" for a software development team. Your goal is to conduct a simulated interview to transform a high-level, ambiguous user idea into a detailed, concrete set of requirements.
+    
+    You must generate two things:
+    1. A list of 3-5 specific, clarifying questions that would be asked in an interview with the user. These questions should probe for details about the target audience, core value proposition, aesthetic, and unique features.
+    2. A first draft of the requirements based on the initial user idea. This should be a structured JSON object.
+    
+    User's idea: "${userIdea}"
+    
+    The output must be a single, valid JSON object with the following keys and structure:
+    {
+      "questions": ["Question 1 about target demographic", "Question 2 about core value proposition", "Question 3 about aesthetics", "Question 4 about key features"],
+      "draftRequirements": {
+        "coreFeatures": ["Feature A", "Feature B", "Feature C"],
+        "aesthetics": "A brief, descriptive summary of the desired look and feel.",
+        "targetAudience": "A precise description of the ideal user or market segment."
+      }
+    }
+  `;
+  const result = await model.generateContent(prompt);
+  return JSON.parse(result.response.text);
+}
+
+// Agent 2: Conflict Resolver
+async function runConflictResolverAgent(draftRequirements) {
+  const genAI = new GoogleGenerativeAI(process.env.CONFLICT_GEMINI_API_KEY);
+  const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+  const prompt = `
+    You are a "Conflict Resolver Agent". Your task is to analyze a set of draft software requirements and identify any logical inconsistencies or contradictions.
+    
+    Analyze the following draft requirements and identify potential conflicts. For each conflict, you must:
+    1. Describe the issue clearly.
+    2. Propose 2-3 specific options to resolve the trade-off. These options should act as prompts for the user to make a decision.
+    
+    The requirements to analyze are:
+    ${JSON.stringify(draftRequirements, null, 2)}
+    
+    The output must be a single, valid JSON object with the following structure. If no conflicts are found, the "conflicts" array should be empty.
+    {
+      "conflicts": [
+        {
+          "issue": "A clear description of the logical contradiction.",
+          "options": ["Option 1 to resolve the conflict.", "Option 2 to resolve the conflict."]
+        }
+      ]
+    }
+  `;
+  const result = await model.generateContent(prompt);
+  return JSON.parse(result.response.text);
+}
+
+// Agent 3: Validator
+async function runValidatorAgent(draftRequirements, conflicts) {
+  const genAI = new GoogleGenerativeAI(process.env.VALIDATOR_GEMINI_API_KEY);
+  const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+  const prompt = `
+    You are a "Validator Agent". Your role is to assess the feasibility and viability of a set of software requirements and any identified conflicts.
+    
+    Perform the following checks:
+    - Technical Feasibility: Cross-reference the proposed features against common development challenges and technological limitations.
+    - Market Viability: Analyze the competitive landscape and evaluate if the features provide a unique edge or are standard for the market.
+    - Business Objectives: Ensure the requirements align with the original business goals, such as user retention or high revenue.
+    
+    Based on your analysis, provide a detailed report and assign a risk level.
+    
+    Requirements to validate: ${JSON.stringify(draftRequirements, null, 2)}
+    Identified conflicts: ${JSON.stringify(conflicts, null, 2)}
+    
+    The output must be a single, valid JSON object with the following structure:
+    {
+      "feasibilityReport": {
+        "technical": "A detailed analysis of technical complexity and challenges.",
+        "market": "An assessment of market viability and competitive edge.",
+        "business": "An evaluation of how the features align with business goals."
+      },
+      "riskLevel": "low" | "medium" | "high"
+    }
+  `;
+  const result = await model.generateContent(prompt);
+  return JSON.parse(result.response.text);
+}
+
+// Agent 4: Prioritizer
+async function runPrioritizerAgent(feasibilityReport) {
+  const genAI = new GoogleGenerativeAI(process.env.PRIORITIZER_GEMINI_API_KEY);
+  const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+  const prompt = `
+    You are a "Prioritizer Agent". Your job is to create a structured, prioritized roadmap based on a feasibility report.
+    
+    Categorize all features mentioned in the report into three groups:
+    - "mustHave": Features essential for a Minimum Viable Product (MVP).
+    - "shouldHave": Features that add significant value and should be included after the MVP.
+    - "niceToHave": Features that can be added in future iterations if resources allow.
+    
+    Use the provided feasibility report to inform your prioritization, considering factors like effort and impact.
+    
+    Feasibility Report: ${JSON.stringify(feasibilityReport, null, 2)}
+    
+    The output must be a single, valid JSON object with the following structure:
+    {
+      "mustHave": ["Feature 1", "Feature 2"],
+      "shouldHave": ["Feature A", "Feature B"],
+      "niceToHave": ["Feature X", "Feature Y"]
+    }
+  `;
+  const result = await model.generateContent(prompt);
+  return JSON.parse(result.response.text);
+}
