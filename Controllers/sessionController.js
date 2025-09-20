@@ -14,35 +14,43 @@ exports.startSession = async (req, res) => {
         .json({ message: 'User idea and User ID are required.' });
     }
 
-    // 2. Validate userId format (must be valid ObjectId)
+    // 2. Validate userId format
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       return res.status(400).json({ message: 'Invalid User ID format.' });
     }
 
-    // 3. Check if the user exists
+    // 3. Verify user existence
     const user = await User.findById(userId);
     if (!user) {
       return res.status(404).json({ message: 'User not found.' });
     }
 
-    // 4. Create a new session and link it to the user
+    // 4. Create and save a new session
     const newSession = new Session({
       userIdea,
       userId,
-      status: 'started', // ✅ default status to avoid undefined later
+      status: 'started', // default status
     });
 
     await newSession.save();
 
-    // 5. Respond with the new session info
-    res.status(201).json({
+    // 5. Send response
+    return res.status(201).json({
       sessionId: newSession._id,
       status: newSession.status,
-      message: 'Session created. Next: run clarifier agent.',
+      message: 'Session created successfully. Next: run clarifier agent.',
     });
   } catch (error) {
     console.error('Error starting session:', error);
-    res.status(500).json({ message: 'Internal server error.' });
+
+    // Handle Mongo duplicate errors or other specific cases
+    if (error.code === 11000) {
+      return res
+        .status(400)
+        .json({ message: 'Duplicate key error. Session already exists.' });
+    }
+
+    return res.status(500).json({ message: 'Internal server error.' });
   }
 };
 
@@ -51,32 +59,30 @@ exports.getBlueprint = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // 1. Validate the session ID
+    // 1. Validate session ID
     if (!id || !mongoose.Types.ObjectId.isValid(id)) {
       return res
         .status(400)
         .json({ message: 'A valid Session ID is required in the URL.' });
     }
 
-    // 2. Find the session document by its ID
+    // 2. Find the session
     const session = await Session.findById(id);
-
-    // 3. Handle case where the session is not found
     if (!session) {
       return res.status(404).json({ message: 'Session not found.' });
     }
 
-    // 4. Check if the session is complete
+    // 3. Ensure session is in the right state
     if (session.status !== 'prioritized' && session.status !== 'complete') {
       return res.status(400).json({
         message: 'Blueprint is not ready. Please run all agents first.',
       });
     }
 
-    // 5. Compile the final blueprint document (with safe optional chaining)
+    // 4. Compile blueprint safely
     const blueprint = {
       projectName: session.userIdea,
-      problemStatement: '...', // Placeholder until you generate with an agent
+      problemStatement: '...', // placeholder until agent fills in
       requirements: session.clarifierOutput?.draftRequirements || {},
       conflictsResolved: session.conflictOutput?.conflicts || [],
       feasibilityReport: session.validatorOutput?.feasibilityReport || {},
@@ -86,10 +92,10 @@ exports.getBlueprint = async (req, res) => {
       lastUpdated: session.updatedAt,
     };
 
-    // 6. Send the blueprint as a JSON response
-    res.status(200).json(blueprint);
+    // 5. Send response
+    return res.status(200).json(blueprint);
   } catch (error) {
     console.error('Error getting blueprint:', error);
-    res.status(500).json({ message: 'Internal server error.' });
+    return res.status(500).json({ message: 'Internal server error.' });
   }
 };

@@ -1,14 +1,16 @@
 const Session = require('../Model/sessionModel');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// Helper function to handle common session retrieval logic
-// Now checks for sessionId in request headers
+// Helper function to handle common session retrieval logic.
+// This function will now correctly handle the sessionId passed in the request body
 const getSession = async (req, res) => {
-  const sessionId = req.headers['x-session-id'] || req.body.sessionId; // Fallback to body for simplicity
+  const sessionId = req.headers['x-session-id'] || req.body.sessionId; // Use a consistent header or body property
+  
   if (!sessionId) {
     res.status(400).json({ message: 'Session ID is required.' });
     return null;
   }
+  
   const session = await Session.findById(sessionId);
   if (!session) {
     res.status(404).json({ message: 'Session not found.' });
@@ -20,11 +22,19 @@ const getSession = async (req, res) => {
 // Start a new session and get a session ID
 exports.startSession = async (req, res) => {
   try {
+    const { userId, userIdea } = req.body;
+    if (!userId || !userIdea) {
+      return res.status(400).json({ message: 'User ID and user idea are required to start a session.' });
+    }
+
     const session = new Session({
+      userId,
+      userIdea,
       status: 'started'
     });
     await session.save();
-    res.status(200).json({ sessionId: session._id });
+
+    res.status(200).json({ sessionId: session._id, message: 'Session started successfully.' });
   } catch (error) {
     console.error('Error starting session:', error);
     res.status(500).json({ message: 'Internal server error.' });
@@ -32,21 +42,18 @@ exports.startSession = async (req, res) => {
 };
 
 // NEW Agent 1: Start Clarifier (Step 1)
-// This function takes the initial user idea and sends back the clarifying questions.
-// It uses a POST method to receive the user idea and a session ID from the header.
+// This function now takes the userIdea from the initial session creation and runs the clarifier agent.
 exports.startClarifierProcess = async (req, res) => {
   try {
     const session = await getSession(req, res);
     if (!session) return;
     
-    const { userIdea } = req.body;
-    if (!userIdea) {
-      return res.status(400).json({ message: 'User idea is required to start clarification.' });
+    if (!session.userIdea) {
+      return res.status(400).json({ message: 'User idea not found in session. Please start a new session.' });
     }
 
     // Run the clarifier agent and save the full output
-    const clarifierOutput = await runClarifierAgent(userIdea);
-    session.userIdea = userIdea;
+    const clarifierOutput = await runClarifierAgent(session.userIdea);
     session.clarifierOutput = clarifierOutput;
     session.status = 'clarified';
     await session.save();
@@ -64,8 +71,6 @@ exports.startClarifierProcess = async (req, res) => {
 };
 
 // NEW Agent 1: Submit Answers (Step 2)
-// This function receives the user's answers and updates the session.
-// It also takes the session ID from the header.
 exports.submitClarifierAnswers = async (req, res) => {
   try {
     const session = await getSession(req, res);
@@ -81,7 +86,6 @@ exports.submitClarifierAnswers = async (req, res) => {
     session.status = 'answers_submitted';
     await session.save();
 
-    // Respond with a success message
     res.status(200).json({
       sessionId: session._id,
       message: 'Answers submitted successfully.'
@@ -203,7 +207,7 @@ async function runClarifierAgent(userIdea) {
   
   const result = await model.generateContent(prompt);
 
-  // FIX: Safely retrieve the text content from the response, handling the case where it's a function.
+  // Safely retrieve the text content from the response, handling the case where it's a function.
   const text = typeof result.response.text === 'function' 
     ? await result.response.text() 
     : result.response.text;
@@ -253,7 +257,7 @@ async function runConflictResolverAgent(draftRequirements) {
 
   const result = await model.generateContent(prompt);
   
-  // FIX: Safely retrieve the text content from the response.
+  // Safely retrieve the text content from the response.
   const text = typeof result.response.text === 'function' 
     ? await result.response.text() 
     : result.response.text;
@@ -304,7 +308,7 @@ async function runValidatorAgent(draftRequirements, conflicts) {
 
   const result = await model.generateContent(prompt);
   
-  // FIX: Safely retrieve the text content from the response.
+  // Safely retrieve the text content from the response.
   const text = typeof result.response.text === 'function' 
     ? await result.response.text() 
     : result.response.text;
@@ -351,7 +355,7 @@ async function runPrioritizerAgent(feasibilityReport) {
 
   const result = await model.generateContent(prompt);
   
-  // FIX: Safely retrieve the text content from the response.
+  // Safely retrieve the text content from the response.
   const text = typeof result.response.text === 'function' 
     ? await result.response.text() 
     : result.response.text;

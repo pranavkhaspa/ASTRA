@@ -19,6 +19,9 @@ const sessionSchema = new mongoose.Schema({
     questions: [String],
     draftRequirements: mongoose.Schema.Types.Mixed,
   },
+  
+  // User's answers to the clarifying questions
+  clarifierAnswers: mongoose.Schema.Types.Mixed,
 
   // Output from the Conflict Resolver Agent
   conflictOutput: {
@@ -50,7 +53,7 @@ const sessionSchema = new mongoose.Schema({
   // A field to track the current stage of the session
   status: {
     type: String,
-    enum: ['started', 'clarified', 'resolved', 'validated', 'prioritized', 'complete'],
+    enum: ['started', 'clarified', 'answers_submitted', 'conflict_found', 'validated', 'prioritized', 'complete'],
     default: 'started',
   },
   
