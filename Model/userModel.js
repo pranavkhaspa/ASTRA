@@ -18,6 +18,12 @@ const userSchema = new mongoose.Schema({
     lowercase: true,
   },
 
+  // Field for storing the user's hashed password
+  password: {
+    type: String,
+    required: true,
+  },
+
   // Timestamps for creation and last update
   createdAt: {
     type: Date,
