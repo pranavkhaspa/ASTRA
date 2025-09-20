@@ -2,9 +2,14 @@ const express = require('express');
 const router = express.Router();
 const agentsController = require('../Controllers/agentController');
 
-// POST /api/agents/clarifier
-// Route to run the Clarifier Agent
-router.post('/clarifier', agentsController.runClarifier);
+// NEW: Routes for the two-step Clarifier process
+// POST /api/agents/clarifier/start
+// Route to get the clarifying questions from the user's idea
+router.post('/clarifier/start', agentsController.startClarifierProcess);
+
+// POST /api/agents/clarifier/submit-answers
+// Route to submit the user's answers to the clarifying questions
+router.post('/clarifier/submit-answers', agentsController.submitClarifierAnswers);
 
 // POST /api/agents/conflict-resolver
 // Route to run the Conflict Resolver Agent

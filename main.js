@@ -18,24 +18,19 @@ connectDB();
 app.use(express.json());
 app.use(cookieParser());
 
-// ✅ Setup CORS properly for cookies
+// ✅ Setup CORS properly
 const allowedOrigins = [
-  "http://localhost:5174",        // local frontend
-  "https://your-frontend-domain.com" // deployed frontend (replace with real domain)
+  "http://localhost:5174",        // Local frontend for development
+  "https://your-frontend-domain.com", // Deployed frontend (replace with your real domain)
+  // Add other allowed origins here if needed
 ];
 
-app.use(
-  cors({
-    origin: function (origin, callback) {
-      if (!origin || allowedOrigins.includes(origin)) {
-        callback(null, true);
-      } else {
-        callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true, // 👈 allow cookies, authorization headers
-  })
-);
+const corsOptions = {
+  origin: allowedOrigins,
+  credentials: true, // This is needed to handle cookies, authorization headers
+};
+
+app.use(cors(corsOptions));
 
 // Routes
 app.use("/api", infoAPI);

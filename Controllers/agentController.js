@@ -2,7 +2,9 @@ const Session = require('../Model/sessionModel');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // Helper function to handle common session retrieval logic
-const getSession = async (sessionId, res) => {
+// Now checks for sessionId in request headers
+const getSession = async (req, res) => {
+  const sessionId = req.headers['x-session-id'] || req.body.sessionId; // Fallback to body for simplicity
   if (!sessionId) {
     res.status(400).json({ message: 'Session ID is required.' });
     return null;
@@ -29,36 +31,64 @@ exports.startSession = async (req, res) => {
   }
 };
 
-// Agent 1: Clarifier
-exports.runClarifier = async (req, res) => {
+// NEW Agent 1: Start Clarifier (Step 1)
+// This function takes the initial user idea and sends back the clarifying questions.
+// It uses a POST method to receive the user idea and a session ID from the header.
+exports.startClarifierProcess = async (req, res) => {
   try {
-    const { sessionId, userIdea } = req.body;
-
-    // Check if session ID and user idea are provided
-    if (!sessionId || !userIdea) {
-      return res.status(400).json({ message: 'Session ID and user idea are required.' });
+    const session = await getSession(req, res);
+    if (!session) return;
+    
+    const { userIdea } = req.body;
+    if (!userIdea) {
+      return res.status(400).json({ message: 'User idea is required to start clarification.' });
     }
 
-    // Retrieve the existing session
-    const session = await getSession(sessionId, res);
-    if (!session) return;
-
-    // Run the clarifier agent
+    // Run the clarifier agent and save the full output
     const clarifierOutput = await runClarifierAgent(userIdea);
-
-    // Update the existing session with clarifier output
     session.userIdea = userIdea;
     session.clarifierOutput = clarifierOutput;
     session.status = 'clarified';
     await session.save();
 
+    // Respond only with the questions for the user
     res.status(200).json({
       sessionId: session._id,
-      clarifierOutput
+      questions: clarifierOutput.questions
     });
 
   } catch (error) {
-    console.error('Error running Clarifier Agent:', error);
+    console.error('Error starting Clarifier Process:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+};
+
+// NEW Agent 1: Submit Answers (Step 2)
+// This function receives the user's answers and updates the session.
+// It also takes the session ID from the header.
+exports.submitClarifierAnswers = async (req, res) => {
+  try {
+    const session = await getSession(req, res);
+    if (!session) return;
+
+    const { userAnswers } = req.body;
+    if (!userAnswers) {
+      return res.status(400).json({ message: 'User answers are required.' });
+    }
+
+    // Update the session with the user's answers
+    session.clarifierAnswers = userAnswers;
+    session.status = 'answers_submitted';
+    await session.save();
+
+    // Respond with a success message
+    res.status(200).json({
+      sessionId: session._id,
+      message: 'Answers submitted successfully.'
+    });
+
+  } catch (error) {
+    console.error('Error submitting Clarifier answers:', error);
     res.status(500).json({ message: 'Internal server error.' });
   }
 };
@@ -66,8 +96,7 @@ exports.runClarifier = async (req, res) => {
 // Agent 2: Conflict Resolver
 exports.runConflictResolver = async (req, res) => {
   try {
-    const { sessionId } = req.body;
-    const session = await getSession(sessionId, res);
+    const session = await getSession(req, res);
     if (!session) return;
 
     const draftRequirements = session.clarifierOutput.draftRequirements;
@@ -77,7 +106,7 @@ exports.runConflictResolver = async (req, res) => {
 
     const conflictOutput = await runConflictResolverAgent(draftRequirements);
     session.conflictOutput = conflictOutput;
-    session.status = 'conflicts_identified';
+    session.status = 'conflict_found';
     await session.save();
 
     res.status(200).json({
@@ -94,8 +123,7 @@ exports.runConflictResolver = async (req, res) => {
 // Agent 3: Validator
 exports.runValidator = async (req, res) => {
   try {
-    const { sessionId } = req.body;
-    const session = await getSession(sessionId, res);
+    const session = await getSession(req, res);
     if (!session) return;
 
     const draftRequirements = session.clarifierOutput.draftRequirements;
@@ -123,8 +151,7 @@ exports.runValidator = async (req, res) => {
 // Agent 4: Prioritizer
 exports.runPrioritizer = async (req, res) => {
   try {
-    const { sessionId } = req.body;
-    const session = await getSession(sessionId, res);
+    const session = await getSession(req, res);
     if (!session) return;
 
     const feasibilityReport = session.validatorOutput.feasibilityReport;
@@ -175,25 +202,26 @@ async function runClarifierAgent(userIdea) {
   console.log('Clarifier Prompt:', prompt);
   
   const result = await model.generateContent(prompt);
-  const text = result.response.text;
+
+  // FIX: Safely retrieve the text content from the response, handling the case where it's a function.
+  const text = typeof result.response.text === 'function' 
+    ? await result.response.text() 
+    : result.response.text;
   
   console.log('Raw Clarifier API Response:', text);
   
-  // Use a regular expression to extract the first JSON object from the string
-  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```|{([\s\S]*?)}/);
-  
-  if (jsonMatch && (jsonMatch[1] || jsonMatch[2])) {
-    try {
-      const jsonString = jsonMatch[1] || `{${jsonMatch[2]}}`;
-      return JSON.parse(jsonString);
-    } catch (e) {
-      console.error('Failed to parse extracted JSON:', e);
-      // Fallback to the original text if parsing fails
+  try {
+    // Attempt to extract and parse JSON. This is a more robust way to handle the output.
+    const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
+    if (jsonMatch && jsonMatch[1]) {
+      return JSON.parse(jsonMatch[1]);
+    } else {
+      // If no code block, try to parse the entire string as a last resort
       return JSON.parse(text);
     }
-  } else {
-    // If no JSON is found, try to parse the whole string as a last resort
-    return JSON.parse(text);
+  } catch (e) {
+    console.error('Failed to parse JSON from Clarifier response:', e);
+    throw new Error('Invalid JSON format from AI agent.');
   }
 }
 
@@ -224,21 +252,24 @@ async function runConflictResolverAgent(draftRequirements) {
   console.log('Conflict Resolver Prompt:', prompt);
 
   const result = await model.generateContent(prompt);
-  const text = result.response.text;
+  
+  // FIX: Safely retrieve the text content from the response.
+  const text = typeof result.response.text === 'function' 
+    ? await result.response.text() 
+    : result.response.text;
   
   console.log('Raw Conflict Resolver API Response:', text);
-
-  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```|{([\s\S]*?)}/);
-  if (jsonMatch && (jsonMatch[1] || jsonMatch[2])) {
-    try {
-      const jsonString = jsonMatch[1] || `{${jsonMatch[2]}}`;
-      return JSON.parse(jsonString);
-    } catch (e) {
-      console.error('Failed to parse extracted JSON in Conflict Resolver:', e);
+  
+  try {
+    const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
+    if (jsonMatch && jsonMatch[1]) {
+      return JSON.parse(jsonMatch[1]);
+    } else {
       return JSON.parse(text);
     }
-  } else {
-    return JSON.parse(text);
+  } catch (e) {
+    console.error('Failed to parse JSON in Conflict Resolver:', e);
+    throw new Error('Invalid JSON format from AI agent.');
   }
 }
 
@@ -272,21 +303,24 @@ async function runValidatorAgent(draftRequirements, conflicts) {
   console.log('Validator Prompt:', prompt);
 
   const result = await model.generateContent(prompt);
-  const text = result.response.text;
+  
+  // FIX: Safely retrieve the text content from the response.
+  const text = typeof result.response.text === 'function' 
+    ? await result.response.text() 
+    : result.response.text;
   
   console.log('Raw Validator API Response:', text);
-
-  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```|{([\s\S]*?)}/);
-  if (jsonMatch && (jsonMatch[1] || jsonMatch[2])) {
-    try {
-      const jsonString = jsonMatch[1] || `{${jsonMatch[2]}}`;
-      return JSON.parse(jsonString);
-    } catch (e) {
-      console.error('Failed to parse extracted JSON in Validator:', e);
+  
+  try {
+    const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
+    if (jsonMatch && jsonMatch[1]) {
+      return JSON.parse(jsonMatch[1]);
+    } else {
       return JSON.parse(text);
     }
-  } else {
-    return JSON.parse(text);
+  } catch (e) {
+    console.error('Failed to parse JSON in Validator:', e);
+    throw new Error('Invalid JSON format from AI agent.');
   }
 }
 
@@ -316,20 +350,23 @@ async function runPrioritizerAgent(feasibilityReport) {
   console.log('Prioritizer Prompt:', prompt);
 
   const result = await model.generateContent(prompt);
-  const text = result.response.text;
+  
+  // FIX: Safely retrieve the text content from the response.
+  const text = typeof result.response.text === 'function' 
+    ? await result.response.text() 
+    : result.response.text;
   
   console.log('Raw Prioritizer API Response:', text);
-
-  const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```|{([\s\S]*?)}/);
-  if (jsonMatch && (jsonMatch[1] || jsonMatch[2])) {
-    try {
-      const jsonString = jsonMatch[1] || `{${jsonMatch[2]}}`;
-      return JSON.parse(jsonString);
-    } catch (e) {
-      console.error('Failed to parse extracted JSON in Prioritizer:', e);
+  
+  try {
+    const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
+    if (jsonMatch && jsonMatch[1]) {
+      return JSON.parse(jsonMatch[1]);
+    } else {
       return JSON.parse(text);
     }
-  } else {
-    return JSON.parse(text);
+  } catch (e) {
+    console.error('Failed to parse JSON in Prioritizer:', e);
+    throw new Error('Invalid JSON format from AI agent.');
   }
 }
