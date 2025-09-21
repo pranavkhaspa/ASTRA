@@ -2,9 +2,9 @@ const Session = require('../Model/sessionModel');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // Helper function to handle common session retrieval logic.
-// This function will now correctly handle the sessionId passed in the request body
+// This function will now correctly handle the sessionId passed in the request body, headers, or URL query.
 const getSession = async (req, res) => {
-  const sessionId = req.headers['x-session-id'] || req.body.sessionId; // Use a consistent header or body property
+  const sessionId = req.headers['x-session-id'] || req.body.sessionId || req.query.sessionId; 
   
   if (!sessionId) {
     res.status(400).json({ message: 'Session ID is required.' });
@@ -42,7 +42,6 @@ exports.startSession = async (req, res) => {
 };
 
 // NEW Agent 1: Start Clarifier (Step 1)
-// This function now takes the userIdea from the initial session creation and runs the clarifier agent.
 exports.startClarifierProcess = async (req, res) => {
   try {
     const session = await getSession(req, res);
@@ -52,13 +51,11 @@ exports.startClarifierProcess = async (req, res) => {
       return res.status(400).json({ message: 'User idea not found in session. Please start a new session.' });
     }
 
-    // Run the clarifier agent and save the full output
     const clarifierOutput = await runClarifierAgent(session.userIdea);
     session.clarifierOutput = clarifierOutput;
     session.status = 'clarified';
     await session.save();
 
-    // Respond only with the questions for the user
     res.status(200).json({
       sessionId: session._id,
       questions: clarifierOutput.questions
@@ -81,7 +78,6 @@ exports.submitClarifierAnswers = async (req, res) => {
       return res.status(400).json({ message: 'User answers are required.' });
     }
 
-    // Update the session with the user's answers
     session.clarifierAnswers = userAnswers;
     session.status = 'answers_submitted';
     await session.save();
@@ -97,17 +93,20 @@ exports.submitClarifierAnswers = async (req, res) => {
   }
 };
 
-// Agent 2: Conflict Resolver
-exports.runConflictResolver = async (req, res) => {
+// **NEW Agent 2: Get Conflicts (Step 1)**
+// This GET request will run the conflict resolver and return the conflicts for the user to see.
+exports.getConflicts = async (req, res) => {
   try {
     const session = await getSession(req, res);
     if (!session) return;
 
+    // Check if the clarifier has run
     const draftRequirements = session.clarifierOutput.draftRequirements;
     if (!draftRequirements) {
-      return res.status(400).json({ message: 'Clarifier output missing in session.' });
+      return res.status(400).json({ message: 'Clarifier output missing in session. Please complete clarification first.' });
     }
 
+    // Run the agent and save the output to the session
     const conflictOutput = await runConflictResolverAgent(draftRequirements);
     session.conflictOutput = conflictOutput;
     session.status = 'conflict_found';
@@ -115,11 +114,44 @@ exports.runConflictResolver = async (req, res) => {
 
     res.status(200).json({
       sessionId: session._id,
-      conflictOutput
+      conflicts: conflictOutput.conflicts
     });
 
   } catch (error) {
-    console.error('Error running Conflict Resolver Agent:', error);
+    console.error('Error getting conflicts:', error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+};
+
+// **NEW Agent 2: Resolve Conflict (Step 2)**
+// This POST request will take the user's choice and update the session.
+exports.resolveConflict = async (req, res) => {
+  try {
+    const session = await getSession(req, res);
+    if (!session) return;
+
+    const { chosenOptionIndex } = req.body;
+    if (chosenOptionIndex === undefined) {
+      return res.status(400).json({ message: 'Chosen option is required.' });
+    }
+
+    // This is where you would apply the chosen resolution to the draft requirements
+    // For this example, we'll just save the user's choice.
+    session.conflictResolution = {
+      chosenOption: chosenOptionIndex,
+      originalConflicts: session.conflictOutput.conflicts,
+      // You can add more logic here to modify the requirements based on the choice
+    };
+    session.status = 'resolved';
+    await session.save();
+
+    res.status(200).json({
+      sessionId: session._id,
+      message: 'Conflict resolved successfully. Session status updated.'
+    });
+
+  } catch (error) {
+    console.error('Error resolving conflict:', error);
     res.status(500).json({ message: 'Internal server error.' });
   }
 };
@@ -132,6 +164,7 @@ exports.runValidator = async (req, res) => {
 
     const draftRequirements = session.clarifierOutput.draftRequirements;
     const conflicts = session.conflictOutput.conflicts;
+    
     if (!draftRequirements || !conflicts) {
       return res.status(400).json({ message: 'Clarifier or Conflict Resolver output missing in session.' });
     }
@@ -207,7 +240,6 @@ async function runClarifierAgent(userIdea) {
   
   const result = await model.generateContent(prompt);
 
-  // Safely retrieve the text content from the response, handling the case where it's a function.
   const text = typeof result.response.text === 'function' 
     ? await result.response.text() 
     : result.response.text;
@@ -215,12 +247,10 @@ async function runClarifierAgent(userIdea) {
   console.log('Raw Clarifier API Response:', text);
   
   try {
-    // Attempt to extract and parse JSON. This is a more robust way to handle the output.
     const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/);
     if (jsonMatch && jsonMatch[1]) {
       return JSON.parse(jsonMatch[1]);
     } else {
-      // If no code block, try to parse the entire string as a last resort
       return JSON.parse(text);
     }
   } catch (e) {
@@ -257,7 +287,6 @@ async function runConflictResolverAgent(draftRequirements) {
 
   const result = await model.generateContent(prompt);
   
-  // Safely retrieve the text content from the response.
   const text = typeof result.response.text === 'function' 
     ? await result.response.text() 
     : result.response.text;
@@ -308,7 +337,6 @@ async function runValidatorAgent(draftRequirements, conflicts) {
 
   const result = await model.generateContent(prompt);
   
-  // Safely retrieve the text content from the response.
   const text = typeof result.response.text === 'function' 
     ? await result.response.text() 
     : result.response.text;
@@ -355,7 +383,6 @@ async function runPrioritizerAgent(feasibilityReport) {
 
   const result = await model.generateContent(prompt);
   
-  // Safely retrieve the text content from the response.
   const text = typeof result.response.text === 'function' 
     ? await result.response.text() 
     : result.response.text;
