@@ -6,6 +6,7 @@ const userRoutes = require('./Routes/userRoutes');
 const infoAPI = require("./Config/infoAPI");
 const cors = require('cors'); 
 const cookieParser = require('cookie-parser'); 
+const summarizer=require("./Routes/sumarizer")
 require('dotenv').config();
 
 const app = express();
@@ -37,6 +38,7 @@ app.use("/api", infoAPI);
 app.use('/api/session', sessionRoutes);
 app.use('/api/agents', agentsRoutes);
 app.use('/api/users', userRoutes);
+app.use("/api/summarize",summarizer);
 
 // Test Route
 app.get('/', (req, res) => {
